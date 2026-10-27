@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap Gallery</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4;
+    --surface: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b6b6b;
+    --border: #dcdcd6;
+    --accent: #1a1a1a;
+    --accent-text: #ffffff;
+    --danger: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121212;
+      --surface: #1c1c1c;
+      --text: #f0f0ee;
+      --muted: #9a9a96;
+      --border: #333330;
+      --accent: #f0f0ee;
+      --accent-text: #121212;
+      --danger: #f2b8b5;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+  }
+  main { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 18px; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); padding: 8px 14px;
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  input {
+    font: inherit; padding: 10px 12px; border-radius: 10px; width: 100%;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  }
+  .login { max-width: 360px; margin: 18vh auto 0; display: grid; gap: 10px; }
+  .error { color: var(--danger); font-size: 14px; min-height: 1.2em; }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .card img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; cursor: zoom-in; background: var(--border); }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+  .row a, .row button { font-size: 12px; padding: 2px 6px; border: 0; background: none; color: var(--text); text-decoration: underline; cursor: pointer; }
+  .row button.del { color: var(--danger); }
+  .empty { color: var(--muted); text-align: center; padding: 48px 0; }
+  .lightbox {
+    position: fixed; inset: 0; background: rgba(0,0,0,.9); display: none;
+    align-items: center; justify-content: center; padding: 16px; z-index: 10; cursor: zoom-out;
+  }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section class="login" id="login">
+    <h1>Snap Gallery</h1>
+    <input id="key" type="password" placeholder="Access key" autocomplete="current-password">
+    <button class="primary" id="enter">Open gallery</button>
+    <div class="error" id="loginError"></div>
+  </section>
+
+  <section id="gallery" hidden>
+    <header>
+      <div>
+        <h1>Snap Gallery</h1>
+        <div class="sub" id="count"></div>
+      </div>
+      <div>
+        <button id="refresh">Refresh</button>
+        <button id="signout">Sign out</button>
+      </div>
+    </header>
+    <div class="grid" id="grid"></div>
+    <p class="empty" id="empty" hidden>No photos yet.</p>
+  </section>
+</main>
+
+<div class="lightbox" id="lightbox"><img id="lightboxImg" alt=""></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var key = "";
+
+  function store(k) { try { localStorage.setItem("snapKey", k); } catch (e) {} }
+  function recall() { try { return localStorage.getItem("snapKey") || ""; } catch (e) { return ""; } }
+  function forget() { try { localStorage.removeItem("snapKey"); } catch (e) {} }
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ "x-snap-key": key }, opts.headers || {});
+    return fetch(path, opts);
+  }
+
+  function fmtDate(iso) {
+    var d = new Date(iso);
+    return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  function fmtSize(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB"; }
+
+  async function load() {
+    var res = await api("/api/list");
+    if (res.status === 401) throw new Error("unauthorized");
+    if (!res.ok) throw new Error("Could not load photos");
+    var photos = await res.json();
+
+    var grid = $("grid");
+    grid.innerHTML = "";
+    $("empty").hidden = photos.length > 0;
+    $("count").textContent = photos.length + (photos.length === 1 ? " photo" : " photos");
+
+    photos.forEach(function (p) {
+      var card = document.createElement("div");
+      card.className = "card";
+
+      var img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = p.url;
+      img.alt = "Photo taken " + fmtDate(p.uploadedAt);
+      img.onclick = function () { $("lightboxImg").src = p.url; $("lightbox").classList.add("open"); };
+
+      var row = document.createElement("div");
+      row.className = "row";
+      var when = document.createElement("span");
+      when.textContent = fmtDate(p.uploadedAt) + " · " + fmtSize(p.size);
+
+      var actions = document.createElement("span");
+      var open = document.createElement("a");
+      open.href = p.url; open.target = "_blank"; open.rel = "noopener"; open.textContent = "Open";
+      var del = document.createElement("button");
+      del.className = "del"; del.textContent = "Delete";
+      del.onclick = async function () {
+        if (!confirm("Delete this photo permanently?")) return;
+        var r = await api("/api/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: p.url })
+        });
+        if (r.ok) load(); else alert("Delete failed.");
+      };
+      actions.append(open, del);
+
+      row.append(when, actions);
+      card.append(img, row);
+      grid.append(card);
+    });
+  }
+
+  async function enter(candidate, silent) {
+    key = candidate;
+    try {
+      await load();
+      store(key);
+      $("login").hidden = true;
+      $("gallery").hidden = false;
+    } catch (e) {
+      key = "";
+      if (e.message === "unauthorized") {
+        forget();
+        if (!silent) $("loginError").textContent = "Incorrect key.";
+      } else if (!silent) {
+        $("loginError").textContent = e.message;
+      }
+    }
+  }
+
+  $("enter").onclick = function () { $("loginError").textContent = ""; enter($("key").value, false); };
+  $("key").addEventListener("keydown", function (e) { if (e.key === "Enter") $("enter").click(); });
+  $("refresh").onclick = function () { load().catch(function () {}); };
+  $("signout").onclick = function () {
+    forget(); key = "";
+    $("gallery").hidden = true; $("login").hidden = false; $("key").value = "";
+  };
+  $("lightbox").onclick = function () { $("lightbox").classList.remove("open"); };
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") $("lightbox").classList.remove("open"); });
+
+  var saved = recall();
+  if (saved) enter(saved, true);
+})();
+</script>
+</body>
+</html>
